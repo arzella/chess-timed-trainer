@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chess Timed Trainer 2.6</title>
+  <title>Chess Timed Trainer 2.7</title>
   <style>
     :root {
       --bg: #0b1220;
@@ -519,7 +519,7 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Chess Timed Trainer <span class="version-tag">v2.6</span></h1>
+    <h1>Chess Timed Trainer <span class="version-tag">v2.7</span></h1>
     <div class="subtitle">Paste FENs or load a PGN/TXT file, then let the board auto-advance after each thinking interval. The solution note can appear automatically during the review phase.</div>
     <div class="instructions">
       <strong>How to use:</strong> load a PGN, choose a time mode, press <strong>Start</strong>, enter your move on the board, then review the solution and engine line when the timer expires. Use <strong>Review wrong positions</strong> or <strong>Review due</strong> for repetition.
@@ -564,6 +564,14 @@
             <div class="row" style="margin-top:8px;">
               <button class="secondary" id="loadBuiltInBtn">Load built-in</button>
             </div>
+            <div style="height:12px"></div>
+            <div class="small">Backup (rating, history, stats, settings, session)</div>
+            <div class="row" style="margin-top:6px;">
+              <button class="secondary" id="backupExportBtn" title="Save everything this browser remembers to a file">Export backup</button>
+              <button class="secondary" id="backupImportBtn" title="Replace this browser's data with a backup file">Import backup</button>
+            </div>
+            <input type="file" id="backupFile" accept=".json,application/json" hidden />
+            <div class="small" style="margin-top:6px;opacity:.8">Data is saved per website address. Use this to move it between the local file and the website, or to another computer.</div>
           </div>
         </details>
 
@@ -4478,6 +4486,81 @@
     els.loadBtn.addEventListener('click', () => loadPositions(parsePositions(els.input.value)));
     els.sampleBtn.addEventListener('click', sample);
     els.downloadBtn.addEventListener('click', toJSON);
+
+    // ---- Backup: export / import everything this trainer keeps in localStorage ----
+    const BACKUP_PREFIX = 'chess_timed_trainer_';
+    const BACKUP_FORMAT = 'chess-timed-trainer-backup';
+
+    function collectBackup() {
+      const data = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(BACKUP_PREFIX)) data[k] = localStorage.getItem(k);
+      }
+      return { format: BACKUP_FORMAT, version: 1, app: 'Chess Timed Trainer 2.7',
+               exportedAt: new Date().toISOString(), source: location.origin === 'null' ? 'local file' : location.origin, data };
+    }
+
+    function exportBackup() {
+      let payload;
+      try { payload = collectBackup(); } catch (e) { setMessage('Backup failed: browser storage is not available.', 'bad'); return; }
+      const n = Object.keys(payload.data).length;
+      if (!n) { setMessage('Nothing to back up yet — solve a few puzzles first.', 'warn'); return; }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'chess_trainer_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      let games = 0;
+      try { games = JSON.parse(payload.data[HISTORY_KEY] || '[]').length; } catch (_) {}
+      setMessage('Backup saved (' + n + ' items, ' + games + ' rated attempts).', 'good');
+    }
+
+    function parseBackup(text) {
+      let obj;
+      try { obj = JSON.parse(text); } catch (_) { throw new Error('the file is not valid JSON'); }
+      if (!obj || obj.format !== BACKUP_FORMAT || !obj.data || typeof obj.data !== 'object') throw new Error('this is not a Chess Timed Trainer backup');
+      const entries = Object.entries(obj.data).filter(([k, v]) => k.startsWith(BACKUP_PREFIX) && typeof v === 'string');
+      if (!entries.length) throw new Error('the backup is empty');
+      return { meta: obj, entries };
+    }
+
+    function applyBackup(entries) {
+      const keep = [];
+      for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(BACKUP_PREFIX)) keep.push(k); }
+      keep.forEach(k => localStorage.removeItem(k));
+      entries.forEach(([k, v]) => localStorage.setItem(k, v));
+    }
+
+    function importBackupFile(file) {
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        let parsed;
+        try { parsed = parseBackup(String(reader.result || '')); }
+        catch (e) { setMessage('Import failed: ' + e.message + '.', 'bad'); return; }
+        const when = parsed.meta.exportedAt ? new Date(parsed.meta.exportedAt).toLocaleString() : 'unknown date';
+        const ok = window.confirm('Replace this browser\'s trainer data (rating, history, settings, session) with the backup from ' + when + '?\n\nThis cannot be undone — export a backup first if you want to keep the current data.');
+        if (!ok) { setMessage('Import cancelled.', 'warn'); return; }
+        try { applyBackup(parsed.entries); }
+        catch (e) { setMessage('Import failed: could not write to browser storage.', 'bad'); return; }
+        setMessage('Backup imported — reloading…', 'good');
+        setTimeout(() => location.reload(), 600);
+      };
+      reader.onerror = () => setMessage('Import failed: could not read the file.', 'bad');
+      reader.readAsText(file);
+    }
+
+    const backupExportBtn = document.getElementById('backupExportBtn');
+    const backupImportBtn = document.getElementById('backupImportBtn');
+    const backupFile = document.getElementById('backupFile');
+    if (backupExportBtn) backupExportBtn.addEventListener('click', exportBackup);
+    if (backupImportBtn && backupFile) {
+      backupImportBtn.addEventListener('click', () => { backupFile.value = ''; backupFile.click(); });
+      backupFile.addEventListener('change', () => importBackupFile(backupFile.files && backupFile.files[0]));
+    }
     if (els.loadBuiltInBtn) els.loadBuiltInBtn.addEventListener('click', loadBuiltInSet);
     if (els.resetSessionBtn) els.resetSessionBtn.addEventListener('click', resetSession);
     if (els.reviewWrongBtn) els.reviewWrongBtn.addEventListener('click', reviewWrongPositions);
